@@ -11,6 +11,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Any
 import sys
+import time
 
 # GraphQL query to fetch areas with climbs
 AREAS_QUERY = """
@@ -66,44 +67,77 @@ def load_schema() -> str:
     schema_path = Path(__file__).parent / "schema.sql"
     return schema_path.read_text()
 
-def fetch_all_climbs(api_url: str) -> List[Dict]:
-    """Fetch all climbs from GraphQL API"""
+def fetch_all_climbs(api_url: str, max_retries: int = 5) -> List[Dict]:
+    """Fetch all climbs from GraphQL API with retry logic"""
     print(f"Fetching climbs from {api_url}...")
 
-    response = requests.post(
-        api_url,
-        json={"query": AREAS_QUERY},
-        headers={"Content-Type": "application/json"}
-    )
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                api_url,
+                json={"query": AREAS_QUERY},
+                headers={"Content-Type": "application/json"},
+                timeout=300
+            )
 
-    if response.status_code != 200:
-        raise Exception(f"GraphQL query failed: {response.status_code} {response.text}")
+            # Retry on server errors (502, 503, 504)
+            if response.status_code in [502, 503, 504]:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                    print(f"  ⚠ API returned {response.status_code}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise Exception(f"GraphQL query failed after {max_retries} attempts: {response.status_code}")
 
-    data = response.json()
+            if response.status_code != 200:
+                raise Exception(f"GraphQL query failed: {response.status_code} {response.text[:500]}")
 
-    if "errors" in data:
-        raise Exception(f"GraphQL errors: {data['errors']}")
+            data = response.json()
 
-    areas = data.get("data", {}).get("areas", [])
-    all_climbs = []
+            if "errors" in data:
+                raise Exception(f"GraphQL errors: {data['errors']}")
 
-    # Extract climbs from areas and flatten
-    for area in areas:
-        for climb in area.get("climbs", []):
-            # Use area pathTokens if climb doesn't have them
-            if not climb.get("pathTokens"):
-                climb["pathTokens"] = area.get("pathTokens", [])
+            areas = data.get("data", {}).get("areas", [])
+            all_climbs = []
 
-            # Add area coordinates if climb doesn't have them
-            if not climb.get("metadata", {}).get("lat"):
-                if area.get("metadata", {}).get("lat"):
-                    climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
-                    climb["metadata"]["lng"] = area["metadata"]["lng"]
+            # Extract climbs from areas and flatten
+            for area in areas:
+                for climb in area.get("climbs", []):
+                    # Use area pathTokens if climb doesn't have them
+                    if not climb.get("pathTokens"):
+                        climb["pathTokens"] = area.get("pathTokens", [])
 
-            all_climbs.append(climb)
+                    # Add area coordinates if climb doesn't have them
+                    if not climb.get("metadata", {}).get("lat"):
+                        if area.get("metadata", {}).get("lat"):
+                            climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
+                            climb["metadata"]["lng"] = area["metadata"]["lng"]
 
-    print(f"✓ Total climbs fetched: {len(all_climbs)}")
-    return all_climbs
+                    all_climbs.append(climb)
+
+            print(f"✓ Total climbs fetched: {len(all_climbs)}")
+            return all_climbs
+
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                print(f"  ⚠ Request timeout, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise Exception(f"Request timed out after {max_retries} attempts")
+
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                print(f"  ⚠ Request failed: {e}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise
+
+    raise Exception(f"Failed to fetch climbs after {max_retries} attempts")
 
 def filter_climbs(climbs: List[Dict], config: Dict) -> List[Dict]:
     """Apply filters from config"""
