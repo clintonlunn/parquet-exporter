@@ -1,0 +1,28 @@
+# OpenBeta Parquet Exporter Configuration
+# Customize this file to control what data gets exported
+
+export:
+  # GraphQL API endpoint
+  api_url: "https://api.openbeta.io/graphql"
+
+  # Geographic regions to export (leave empty for worldwide)
+  regions:
+    - USA
+    # - Canada
+    # - Mexico
+    # Uncomment or add more countries as needed
+
+  # Output configuration
+  output:
+    filename: "openbeta-climbs.parquet"
+    compression: "snappy"  # Options: snappy, gzip, zstd, none
+
+  # Pagination for GraphQL queries
+  batch_size: 1000  # Climbs per request
+
+  # Optional filters (comment out to disable)
+  filters:
+    # min_grade: "5.6"
+    # max_grade: "5.15d"
+    # disciplines: ["sport", "trad", "boulder"]
+    # min_length: 10  # meters

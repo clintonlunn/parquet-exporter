@@ -1,0 +1,73 @@
+name: Export OpenBeta Data to Parquet
+
+on:
+  # Run weekly on Sundays at midnight UTC
+  schedule:
+    - cron: '0 0 * * 0'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run export
+        run: |
+          python export.py
+
+      - name: Get current date
+        id: date
+        run: echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.date.outputs.DATE }}
+          name: OpenBeta Data Export - ${{ steps.date.outputs.DATE }}
+          body: |
+            OpenBeta climbing route data export
+
+            **Format:** Apache Parquet
+            **Date:** ${{ steps.date.outputs.DATE }}
+            **Compression:** Snappy
+
+            ## Files
+            - `openbeta-climbs.parquet` - All climbing routes
+
+            ## Usage
+            ```python
+            import pandas as pd
+            df = pd.read_parquet('openbeta-climbs.parquet')
+            ```
+
+            ```r
+            library(arrow)
+            df <- read_parquet('openbeta-climbs.parquet')
+            ```
+
+            ## Data Schema
+            See [schema.sql](https://github.com/OpenBeta/parquet-exporter/blob/main/schema.sql) for field definitions.
+
+            ---
+            Generated from [OpenBeta GraphQL API](https://api.openbeta.io)
+          files: |
+            openbeta-climbs.parquet
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
