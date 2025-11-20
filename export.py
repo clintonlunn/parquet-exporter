@@ -21,10 +21,19 @@ query GetCountries {
 }
 """
 
-# GraphQL query to fetch areas with climbs for a specific country
+# GraphQL query to fetch sub-regions when a country times out
+SUBREGIONS_QUERY = """
+query GetSubregions($country: String!) {
+  areas(filter: {path_tokens: {tokens: [$country], exactMatch: false}}) {
+    pathTokens
+  }
+}
+"""
+
+# GraphQL query to fetch areas with climbs for a specific country or region
 AREAS_QUERY = """
-query GetAreas($country: String!) {
-  areas(filter: {leaf_status: {isLeaf: true}, path_tokens: {tokens: [$country]}}) {
+query GetAreas($tokens: [String!]!) {
+  areas(filter: {leaf_status: {isLeaf: true}, path_tokens: {tokens: $tokens}}) {
     uuid
     area_name
     pathTokens
@@ -75,6 +84,72 @@ def load_schema() -> str:
     schema_path = Path(__file__).parent / "schema.sql"
     return schema_path.read_text()
 
+def fetch_subregions(api_url: str, country: str) -> List[List[str]]:
+    """Fetch sub-regions for a country that's too large"""
+    response = requests.post(
+        api_url,
+        json={"query": SUBREGIONS_QUERY, "variables": {"country": country}},
+        headers={"Content-Type": "application/json"},
+        timeout=120
+    )
+
+    if response.status_code != 200:
+        return []
+
+    data = response.json()
+    if "errors" in data:
+        return []
+
+    # Extract unique next-level paths
+    # e.g., [["USA"], ["USA", "California"], ["USA", "California", "Yosemite"]]
+    # We want [["USA", "California"], ["USA", "Texas"], ...]
+    areas = data.get("data", {}).get("areas", [])
+    subregions = set()
+
+    for area in areas:
+        tokens = area.get("pathTokens", [])
+        # Get the next level: [country, state/province]
+        if len(tokens) >= 2:
+            subregions.add(tuple(tokens[:2]))
+
+    return [list(sr) for sr in sorted(subregions)]
+
+def fetch_region_climbs(api_url: str, tokens: List[str]) -> List[Dict]:
+    """Fetch climbs for a specific region (country or sub-region)"""
+    response = requests.post(
+        api_url,
+        json={"query": AREAS_QUERY, "variables": {"tokens": tokens}},
+        headers={"Content-Type": "application/json"},
+        timeout=120
+    )
+
+    if response.status_code != 200:
+        return None, response.status_code
+
+    data = response.json()
+    if "errors" in data:
+        return None, "GraphQL Error"
+
+    areas = data.get("data", {}).get("areas", [])
+    climbs = []
+
+    # Extract climbs from areas and flatten
+    for area in areas:
+        for climb in area.get("climbs", []):
+            # Use area pathTokens if climb doesn't have them
+            if not climb.get("pathTokens"):
+                climb["pathTokens"] = area.get("pathTokens", [])
+
+            # Add area coordinates if climb doesn't have them
+            if not climb.get("metadata", {}).get("lat"):
+                if area.get("metadata", {}).get("lat"):
+                    climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
+                    climb["metadata"]["lng"] = area["metadata"]["lng"]
+
+            climbs.append(climb)
+
+    return climbs, None
+
 def fetch_all_climbs(api_url: str) -> List[Dict]:
     """Fetch all climbs from GraphQL API by querying each country separately"""
     print(f"Fetching countries from {api_url}...")
@@ -102,42 +177,42 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
     for i, country in enumerate(countries, 1):
         print(f"  [{i}/{len(countries)}] Fetching {country}...")
 
-        response = requests.post(
-            api_url,
-            json={"query": AREAS_QUERY, "variables": {"country": country}},
-            headers={"Content-Type": "application/json"},
-            timeout=120
-        )
+        # Try fetching the whole country first
+        climbs, error = fetch_region_climbs(api_url, [country])
 
-        if response.status_code != 200:
-            print(f"    WARNING: Failed to fetch {country}: {response.status_code}")
+        # If timeout (502/504), break into sub-regions
+        if error in [502, 504]:
+            print(f"    Country too large, fetching sub-regions...")
+            subregions = fetch_subregions(api_url, country)
+
+            if not subregions:
+                print(f"    WARNING: Could not fetch sub-regions for {country}")
+                continue
+
+            print(f"    Found {len(subregions)} sub-regions")
+            country_climbs = 0
+
+            for subregion in subregions:
+                region_name = " > ".join(subregion)
+                sub_climbs, sub_error = fetch_region_climbs(api_url, subregion)
+
+                if sub_error:
+                    print(f"      WARNING: Failed to fetch {region_name}: {sub_error}")
+                    continue
+
+                all_climbs.extend(sub_climbs)
+                country_climbs += len(sub_climbs)
+                print(f"      {region_name}: {len(sub_climbs)} climbs")
+
+            print(f"    {country} total: {country_climbs} climbs")
+
+        elif error:
+            print(f"    WARNING: Failed to fetch {country}: {error}")
             continue
-
-        data = response.json()
-        if "errors" in data:
-            print(f"    WARNING: GraphQL errors for {country}: {data['errors']}")
-            continue
-
-        areas = data.get("data", {}).get("areas", [])
-        country_climbs = 0
-
-        # Extract climbs from areas and flatten
-        for area in areas:
-            for climb in area.get("climbs", []):
-                # Use area pathTokens if climb doesn't have them
-                if not climb.get("pathTokens"):
-                    climb["pathTokens"] = area.get("pathTokens", [])
-
-                # Add area coordinates if climb doesn't have them
-                if not climb.get("metadata", {}).get("lat"):
-                    if area.get("metadata", {}).get("lat"):
-                        climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
-                        climb["metadata"]["lng"] = area["metadata"]["lng"]
-
-                all_climbs.append(climb)
-                country_climbs += 1
-
-        print(f"    {country}: {country_climbs} climbs")
+        else:
+            # Success - got all climbs for this country
+            all_climbs.extend(climbs)
+            print(f"    {country}: {len(climbs)} climbs")
 
     print(f"\nTotal climbs fetched: {len(all_climbs)}")
     return all_climbs
