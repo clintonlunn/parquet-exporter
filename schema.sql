@@ -29,7 +29,7 @@ SELECT
     COALESCE(list_element(pathTokens, 5), '') AS crag,
 
     -- Full path as array (for advanced use)
-    pathTokens AS location_path,
+    -- pathTokens AS location_path,  -- Commented out: array types not supported by many visualization tools
 
     -- Coordinates
     COALESCE(metadata.lat, 0.0) AS latitude,
