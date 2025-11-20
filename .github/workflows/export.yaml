@@ -54,9 +54,12 @@ jobs:
           body: |
             Worldwide climbing route data in Apache Parquet format (snappy compression).
 
-            **${{ steps.stats.outputs.COMPRESSION }}x smaller than JSON** - ${{ steps.stats.outputs.SAVED }}% space savings (intermediate JSON: ${{ steps.stats.outputs.JSON_SIZE }} MB → Parquet: ${{ steps.stats.outputs.PARQUET_SIZE }} MB)
-
-            ${{ steps.stats.outputs.CLIMBS }} climbing routes worldwide.
+            **Export Results:**
+            - Total climbs: ${{ steps.stats.outputs.CLIMBS }}
+            - JSON intermediate: ${{ steps.stats.outputs.JSON_SIZE }} MB
+            - Parquet file: ${{ steps.stats.outputs.PARQUET_SIZE }} MB
+            - Compression ratio: ${{ steps.stats.outputs.COMPRESSION }}x
+            - Size reduction: ${{ steps.stats.outputs.SAVED }}%
 
             ```python
             import pandas as pd
