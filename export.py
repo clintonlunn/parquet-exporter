@@ -154,6 +154,9 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
     """Fetch all climbs from GraphQL API by querying each country separately"""
     print(f"Fetching countries from {api_url}...")
 
+    # Countries known to be too large - always split these
+    LARGE_COUNTRIES = {"USA", "Canada"}
+
     # Get all countries
     response = requests.post(
         api_url,
@@ -176,6 +179,33 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
     # Fetch climbs for each country
     for i, country in enumerate(countries, 1):
         print(f"  [{i}/{len(countries)}] Fetching {country}...")
+
+        # Skip timeout for known large countries - go straight to sub-regions
+        if country in LARGE_COUNTRIES:
+            print(f"    Large country detected, fetching sub-regions...")
+            subregions = fetch_subregions(api_url, country)
+
+            if not subregions:
+                print(f"    WARNING: Could not fetch sub-regions for {country}")
+                continue
+
+            print(f"    Found {len(subregions)} sub-regions")
+            country_climbs = 0
+
+            for subregion in subregions:
+                region_name = " > ".join(subregion)
+                sub_climbs, sub_error = fetch_region_climbs(api_url, subregion)
+
+                if sub_error:
+                    print(f"      WARNING: Failed to fetch {region_name}: {sub_error}")
+                    continue
+
+                all_climbs.extend(sub_climbs)
+                country_climbs += len(sub_climbs)
+                print(f"      {region_name}: {len(sub_climbs)} climbs")
+
+            print(f"    {country} total: {country_climbs} climbs")
+            continue
 
         # Try fetching the whole country first
         climbs, error = fetch_region_climbs(api_url, [country])
