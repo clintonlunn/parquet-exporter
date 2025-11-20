@@ -12,10 +12,19 @@ from pathlib import Path
 from typing import Dict, List, Any
 import sys
 
-# GraphQL query to fetch areas with climbs
+# GraphQL query to fetch all countries
+COUNTRIES_QUERY = """
+query GetCountries {
+  countries {
+    areaName
+  }
+}
+"""
+
+# GraphQL query to fetch areas with climbs for a specific country
 AREAS_QUERY = """
-query GetAreas {
-  areas(filter: {leaf_status: {isLeaf: true}}) {
+query GetAreas($country: String!) {
+  areas(filter: {leaf_status: {isLeaf: true}, path_tokens: {tokens: [$country]}}) {
     uuid
     area_name
     pathTokens
@@ -67,42 +76,70 @@ def load_schema() -> str:
     return schema_path.read_text()
 
 def fetch_all_climbs(api_url: str) -> List[Dict]:
-    """Fetch all climbs from GraphQL API"""
-    print(f"Fetching climbs from {api_url}...")
+    """Fetch all climbs from GraphQL API by querying each country separately"""
+    print(f"Fetching countries from {api_url}...")
 
+    # Get all countries
     response = requests.post(
         api_url,
-        json={"query": AREAS_QUERY},
+        json={"query": COUNTRIES_QUERY},
         headers={"Content-Type": "application/json"}
     )
 
     if response.status_code != 200:
-        raise Exception(f"GraphQL query failed: {response.status_code} {response.text}")
+        raise Exception(f"Countries query failed: {response.status_code} {response.text[:500]}")
 
     data = response.json()
-
     if "errors" in data:
         raise Exception(f"GraphQL errors: {data['errors']}")
 
-    areas = data.get("data", {}).get("areas", [])
+    countries = [c["areaName"] for c in data.get("data", {}).get("countries", [])]
+    print(f"✓ Found {len(countries)} countries")
+
     all_climbs = []
 
-    # Extract climbs from areas and flatten
-    for area in areas:
-        for climb in area.get("climbs", []):
-            # Use area pathTokens if climb doesn't have them
-            if not climb.get("pathTokens"):
-                climb["pathTokens"] = area.get("pathTokens", [])
+    # Fetch climbs for each country
+    for i, country in enumerate(countries, 1):
+        print(f"  [{i}/{len(countries)}] Fetching {country}...")
 
-            # Add area coordinates if climb doesn't have them
-            if not climb.get("metadata", {}).get("lat"):
-                if area.get("metadata", {}).get("lat"):
-                    climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
-                    climb["metadata"]["lng"] = area["metadata"]["lng"]
+        response = requests.post(
+            api_url,
+            json={"query": AREAS_QUERY, "variables": {"country": country}},
+            headers={"Content-Type": "application/json"},
+            timeout=120
+        )
 
-            all_climbs.append(climb)
+        if response.status_code != 200:
+            print(f"    ⚠ Failed to fetch {country}: {response.status_code}")
+            continue
 
-    print(f"✓ Total climbs fetched: {len(all_climbs)}")
+        data = response.json()
+        if "errors" in data:
+            print(f"    ⚠ GraphQL errors for {country}: {data['errors']}")
+            continue
+
+        areas = data.get("data", {}).get("areas", [])
+        country_climbs = 0
+
+        # Extract climbs from areas and flatten
+        for area in areas:
+            for climb in area.get("climbs", []):
+                # Use area pathTokens if climb doesn't have them
+                if not climb.get("pathTokens"):
+                    climb["pathTokens"] = area.get("pathTokens", [])
+
+                # Add area coordinates if climb doesn't have them
+                if not climb.get("metadata", {}).get("lat"):
+                    if area.get("metadata", {}).get("lat"):
+                        climb.setdefault("metadata", {})["lat"] = area["metadata"]["lat"]
+                        climb["metadata"]["lng"] = area["metadata"]["lng"]
+
+                all_climbs.append(climb)
+                country_climbs += 1
+
+        print(f"    ✓ {country}: {country_climbs} climbs")
+
+    print(f"\n✓ Total climbs fetched: {len(all_climbs)}")
     return all_climbs
 
 def filter_climbs(climbs: List[Dict], config: Dict) -> List[Dict]:
