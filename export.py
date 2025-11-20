@@ -87,33 +87,42 @@ def load_schema() -> str:
 
 def fetch_subregions(api_url: str, country: str) -> List[List[str]]:
     """Fetch sub-regions for a country that's too large"""
-    response = requests.post(
-        api_url,
-        json={"query": SUBREGIONS_QUERY, "variables": {"country": country}},
-        headers={"Content-Type": "application/json"},
-        timeout=120
-    )
+    try:
+        response = requests.post(
+            api_url,
+            json={"query": SUBREGIONS_QUERY, "variables": {"country": country}},
+            headers={"Content-Type": "application/json"},
+            timeout=120
+        )
 
-    if response.status_code != 200:
+        if response.status_code != 200:
+            print(f"    ERROR: Subregions query returned {response.status_code}")
+            return []
+
+        data = response.json()
+        if "errors" in data:
+            print(f"    ERROR: GraphQL errors: {data['errors']}")
+            return []
+
+        # Extract unique next-level paths
+        # e.g., [["USA"], ["USA", "California"], ["USA", "California", "Yosemite"]]
+        # We want [["USA", "California"], ["USA", "Texas"], ...]
+        areas = data.get("data", {}).get("areas", [])
+        subregions = set()
+
+        for area in areas:
+            tokens = area.get("pathTokens", [])
+            # Get the next level: [country, state/province]
+            if len(tokens) >= 2:
+                subregions.add(tuple(tokens[:2]))
+
+        return [list(sr) for sr in sorted(subregions)]
+    except requests.Timeout:
+        print(f"    ERROR: Subregions query timed out after 120s")
         return []
-
-    data = response.json()
-    if "errors" in data:
+    except Exception as e:
+        print(f"    ERROR: Unexpected error: {e}")
         return []
-
-    # Extract unique next-level paths
-    # e.g., [["USA"], ["USA", "California"], ["USA", "California", "Yosemite"]]
-    # We want [["USA", "California"], ["USA", "Texas"], ...]
-    areas = data.get("data", {}).get("areas", [])
-    subregions = set()
-
-    for area in areas:
-        tokens = area.get("pathTokens", [])
-        # Get the next level: [country, state/province]
-        if len(tokens) >= 2:
-            subregions.add(tuple(tokens[:2]))
-
-    return [list(sr) for sr in sorted(subregions)]
 
 def fetch_region_climbs(api_url: str, tokens: List[str]) -> List[Dict]:
     """Fetch climbs for a specific region (country or sub-region)"""
