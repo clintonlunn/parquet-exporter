@@ -8,9 +8,13 @@ import json
 import requests
 import duckdb
 import yaml
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple, Optional
 import sys
+
+# Countries known to be too large for single query - always split these
+LARGE_COUNTRIES = {"USA", "Canada"}
 
 # GraphQL query to fetch all countries
 COUNTRIES_QUERY = """
@@ -123,14 +127,17 @@ def fetch_subregions(api_url: str, country: str) -> List[List[str]]:
         print(f"    ERROR: Unexpected error: {e}")
         return []
 
-def fetch_region_climbs(api_url: str, tokens: List[str]) -> List[Dict]:
+def fetch_region_climbs(api_url: str, tokens: List[str]) -> Tuple[Optional[List[Dict]], Optional[Any]]:
     """Fetch climbs for a specific region (country or sub-region)"""
-    response = requests.post(
-        api_url,
-        json={"query": AREAS_QUERY, "variables": {"tokens": tokens}},
-        headers={"Content-Type": "application/json"},
-        timeout=120
-    )
+    try:
+        response = requests.post(
+            api_url,
+            json={"query": AREAS_QUERY, "variables": {"tokens": tokens}},
+            headers={"Content-Type": "application/json"},
+            timeout=120
+        )
+    except requests.Timeout:
+        return None, 504
 
     if response.status_code != 200:
         return None, response.status_code
@@ -159,12 +166,36 @@ def fetch_region_climbs(api_url: str, tokens: List[str]) -> List[Dict]:
 
     return climbs, None
 
+def fetch_country_via_subregions(api_url: str, country: str) -> Tuple[List[Dict], int]:
+    """Fetch climbs for a country by splitting into sub-regions"""
+    subregions = fetch_subregions(api_url, country)
+
+    if not subregions:
+        print(f"    WARNING: Could not fetch sub-regions for {country}")
+        return [], 0
+
+    print(f"    Found {len(subregions)} sub-regions")
+    climbs = []
+    total = 0
+
+    for subregion in subregions:
+        region_name = " > ".join(subregion)
+        sub_climbs, sub_error = fetch_region_climbs(api_url, subregion)
+
+        if sub_error:
+            print(f"      WARNING: Failed to fetch {region_name}: {sub_error}")
+            continue
+
+        climbs.extend(sub_climbs)
+        total += len(sub_climbs)
+        print(f"      {region_name}: {len(sub_climbs)} climbs")
+
+    print(f"    {country} total: {total} climbs")
+    return climbs, total
+
 def fetch_all_climbs(api_url: str) -> List[Dict]:
     """Fetch all climbs from GraphQL API by querying each country separately"""
     print(f"Fetching countries from {api_url}...")
-
-    # Countries known to be too large - always split these
-    LARGE_COUNTRIES = {"USA", "Canada"}
 
     # Get all countries
     response = requests.post(
@@ -185,72 +216,28 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
 
     all_climbs = []
 
-    # Fetch climbs for each country
     for i, country in enumerate(countries, 1):
         print(f"  [{i}/{len(countries)}] Fetching {country}...")
 
-        # Skip timeout for known large countries - go straight to sub-regions
+        # Known large countries - go straight to sub-regions
         if country in LARGE_COUNTRIES:
             print(f"    Large country detected, fetching sub-regions...")
-            subregions = fetch_subregions(api_url, country)
-
-            if not subregions:
-                print(f"    WARNING: Could not fetch sub-regions for {country}")
-                continue
-
-            print(f"    Found {len(subregions)} sub-regions")
-            country_climbs = 0
-
-            for subregion in subregions:
-                region_name = " > ".join(subregion)
-                sub_climbs, sub_error = fetch_region_climbs(api_url, subregion)
-
-                if sub_error:
-                    print(f"      WARNING: Failed to fetch {region_name}: {sub_error}")
-                    continue
-
-                all_climbs.extend(sub_climbs)
-                country_climbs += len(sub_climbs)
-                print(f"      {region_name}: {len(sub_climbs)} climbs")
-
-            print(f"    {country} total: {country_climbs} climbs")
+            climbs, _ = fetch_country_via_subregions(api_url, country)
+            all_climbs.extend(climbs)
             continue
 
         # Try fetching the whole country first
         climbs, error = fetch_region_climbs(api_url, [country])
 
-        # If timeout (502/504), break into sub-regions
         if error in [502, 504]:
+            # Timeout - split into sub-regions
             print(f"    Country too large, fetching sub-regions...")
-            print(f"    NOTE: Consider adding '{country}' to LARGE_COUNTRIES list in export.py to skip this timeout in future runs")
-            subregions = fetch_subregions(api_url, country)
-
-            if not subregions:
-                print(f"    WARNING: Could not fetch sub-regions for {country}")
-                continue
-
-            print(f"    Found {len(subregions)} sub-regions")
-            country_climbs = 0
-
-            for subregion in subregions:
-                region_name = " > ".join(subregion)
-                sub_climbs, sub_error = fetch_region_climbs(api_url, subregion)
-
-                if sub_error:
-                    print(f"      WARNING: Failed to fetch {region_name}: {sub_error}")
-                    continue
-
-                all_climbs.extend(sub_climbs)
-                country_climbs += len(sub_climbs)
-                print(f"      {region_name}: {len(sub_climbs)} climbs")
-
-            print(f"    {country} total: {country_climbs} climbs")
-
+            print(f"    NOTE: Consider adding '{country}' to LARGE_COUNTRIES to skip this timeout")
+            climbs, _ = fetch_country_via_subregions(api_url, country)
+            all_climbs.extend(climbs)
         elif error:
             print(f"    WARNING: Failed to fetch {country}: {error}")
-            continue
         else:
-            # Success - got all climbs for this country
             all_climbs.extend(climbs)
             print(f"    {country}: {len(climbs)} climbs")
 
@@ -286,7 +273,6 @@ def export_to_parquet(climbs: List[Dict], config: Dict):
     con = duckdb.connect(database=":memory:")
 
     # Load climbs as JSON via temp file
-    import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
         json.dump(climbs, tmp)
         tmp_path = tmp.name
@@ -304,8 +290,6 @@ def export_to_parquet(climbs: List[Dict], config: Dict):
     # Load and execute schema transformation
     schema_sql = load_schema()
     print(f"  Applying schema transformation...")
-
-    result = con.execute(schema_sql)
 
     # Export to Parquet
     output_path = Path(filename)
@@ -339,8 +323,13 @@ def export_to_parquet(climbs: List[Dict], config: Dict):
 
     # Show sample
     print(f"\nSample data (first 5 rows):")
-    sample = con.execute(f"SELECT * FROM ({schema_sql}) LIMIT 5").fetchdf()
-    print(sample.to_string())
+    result = con.execute(f"SELECT * FROM ({schema_sql}) LIMIT 5")
+    cols = [d[0] for d in result.description]
+    rows = result.fetchall()
+    print(" | ".join(cols))
+    print("-" * min(120, len(" | ".join(cols))))
+    for row in rows:
+        print(" | ".join(str(v)[:30] for v in row))
 
     con.close()
 

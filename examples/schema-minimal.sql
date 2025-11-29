@@ -4,7 +4,7 @@
 SELECT
     uuid AS climb_id,
     name AS climb_name,
-    COALESCE(grades.yds, grades.vscale, '') AS grade,
+    COALESCE(CAST(grades.yds AS VARCHAR), CAST(grades.vscale AS VARCHAR), '') AS grade,
     COALESCE(list_element(pathTokens, 1), '') AS country,
     COALESCE(list_element(pathTokens, 2), '') AS state,
     COALESCE(metadata.lat, 0.0) AS latitude,

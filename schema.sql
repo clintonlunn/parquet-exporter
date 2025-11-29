@@ -7,10 +7,10 @@ SELECT
     CAST(uuid AS VARCHAR) AS climb_id,
     CAST(name AS VARCHAR) AS climb_name,
 
-    -- Grades (multiple systems available)
-    CAST(COALESCE(grades.yds, '') AS VARCHAR) AS grade_yds,
-    CAST(COALESCE(grades.vscale, '') AS VARCHAR) AS grade_vscale,
-    CAST(COALESCE(grades.french, '') AS VARCHAR) AS grade_french,
+    -- Grades (multiple systems available - cast from JSON to VARCHAR)
+    COALESCE(CAST(grades.yds AS VARCHAR), '') AS grade_yds,
+    COALESCE(CAST(grades.vscale AS VARCHAR), '') AS grade_vscale,
+    COALESCE(CAST(grades.french AS VARCHAR), '') AS grade_french,
 
     -- Climbing type (boolean flags)
     CAST(COALESCE(type.sport, false) AS BOOLEAN) AS is_sport,
@@ -40,8 +40,8 @@ SELECT
     CAST(COALESCE(boltsCount, 0) AS INTEGER) AS bolts_count,
     CAST(COALESCE(fa, '') AS VARCHAR) AS first_ascent,
 
-    -- Safety rating (if available)
-    CAST(COALESCE(safety, '') AS VARCHAR) AS safety,
+    -- Safety rating (if available - cast from JSON)
+    COALESCE(CAST(safety AS VARCHAR), '') AS safety,
 
     -- Description (comment out if not needed - makes file larger)
     CAST(COALESCE(content.description, '') AS VARCHAR) AS description

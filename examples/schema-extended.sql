@@ -6,14 +6,14 @@ SELECT
     uuid AS climb_id,
     name AS climb_name,
 
-    -- All grade systems
-    COALESCE(grades.yds, '') AS grade_yds,
-    COALESCE(grades.vscale, '') AS grade_vscale,
-    COALESCE(grades.french, '') AS grade_french,
-    COALESCE(grades.ewbank, '') AS grade_ewbank,
-    COALESCE(grades.uiaa, '') AS grade_uiaa,
-    COALESCE(grades.za, '') AS grade_za,
-    COALESCE(grades.british, '') AS grade_british,
+    -- All grade systems (cast from JSON to VARCHAR)
+    COALESCE(CAST(grades.yds AS VARCHAR), '') AS grade_yds,
+    COALESCE(CAST(grades.vscale AS VARCHAR), '') AS grade_vscale,
+    COALESCE(CAST(grades.french AS VARCHAR), '') AS grade_french,
+    COALESCE(CAST(grades.ewbank AS VARCHAR), '') AS grade_ewbank,
+    COALESCE(CAST(grades.uiaa AS VARCHAR), '') AS grade_uiaa,
+    COALESCE(CAST(grades.za AS VARCHAR), '') AS grade_za,
+    COALESCE(CAST(grades.british AS VARCHAR), '') AS grade_british,
 
     -- Type flags
     COALESCE(type.sport, false) AS is_sport,
@@ -43,7 +43,7 @@ SELECT
     COALESCE(length, 0) AS length_meters,
     COALESCE(boltsCount, 0) AS bolts_count,
     COALESCE(fa, '') AS first_ascent,
-    COALESCE(safety, '') AS safety,
+    COALESCE(CAST(safety AS VARCHAR), '') AS safety,
 
     -- Content
     COALESCE(content.description, '') AS description,

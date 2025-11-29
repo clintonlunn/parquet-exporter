@@ -85,10 +85,12 @@ FROM climbs
 LIMIT 10
 """
 
-result = con.execute(test_schema).fetchdf()
-print(f"✓ Transformed {len(result)} climbs")
+result = con.execute(test_schema)
+rows = result.fetchall()
+print(f"✓ Transformed {len(rows)} climbs")
 print("\nSample data:")
-print(result[['climb_name', 'grade_yds', 'country', 'state', 'latitude', 'longitude']].head())
+for row in rows[:5]:
+    print(f"  {row[1]} | {row[2]} | {row[7]} | {row[8]} | {row[9]:.4f} | {row[10]:.4f}")
 
 # Test Parquet export
 print("\n3. Testing Parquet export...")
@@ -100,8 +102,8 @@ print(f"✓ Created test-output.parquet ({size:,} bytes)")
 
 # Read it back
 print("\n4. Verifying Parquet file...")
-verify = con.execute("SELECT * FROM 'test-output.parquet'").fetchdf()
-print(f"✓ Successfully read back {len(verify)} rows from Parquet")
+verify = con.execute("SELECT COUNT(*) FROM 'test-output.parquet'").fetchone()[0]
+print(f"✓ Successfully read back {verify} rows from Parquet")
 
 print("\n" + "=" * 60)
 print("✓ All tests passed!")

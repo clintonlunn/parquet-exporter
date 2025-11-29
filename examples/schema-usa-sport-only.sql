@@ -4,7 +4,7 @@
 SELECT
     uuid AS climb_id,
     name AS climb_name,
-    grades.yds AS grade,
+    CAST(grades.yds AS VARCHAR) AS grade,
 
     list_element(pathTokens, 2) AS state,
     list_element(pathTokens, 3) AS region,
@@ -16,7 +16,7 @@ SELECT
 
     length AS length_meters,
     boltsCount AS bolts_count,
-    safety
+    CAST(safety AS VARCHAR) AS safety
 
 FROM climbs
 WHERE list_element(pathTokens, 1) = 'USA'
