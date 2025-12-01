@@ -66,6 +66,14 @@ jobs:
             df = duckdb.execute("SELECT * FROM 'openbeta-climbs.parquet'").fetchdf()
             ```
 
+            **Convert to JSON/GeoJSON:**
+            ```bash
+            python parquet2json.py climbs.json
+            python parquet2json.py climbs.geojson
+            # or with duckdb cli
+            duckdb -c "COPY (SELECT * FROM 'openbeta-climbs.parquet') TO 'climbs.json'"
+            ```
+
             Schema: [schema.sql](https://github.com/OpenBeta/parquet-exporter/blob/main/schema.sql)
             Source: [OpenBeta GraphQL API](https://api.openbeta.io)
           files: |
