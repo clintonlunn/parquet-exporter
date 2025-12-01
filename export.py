@@ -21,15 +21,18 @@ COUNTRIES_QUERY = """
 query GetCountries {
   countries {
     areaName
+    uuid
   }
 }
 """
 
-# GraphQL query to fetch sub-regions when a country times out
+# GraphQL query to fetch sub-regions (states/provinces) for a country
 SUBREGIONS_QUERY = """
-query GetSubregions($country: String!) {
-  areas(filter: {path_tokens: {tokens: [$country], exactMatch: false}}) {
-    pathTokens
+query GetSubregions($uuid: ID!) {
+  area(uuid: $uuid) {
+    children {
+      areaName
+    }
   }
 }
 """
@@ -88,14 +91,14 @@ def load_schema() -> str:
     schema_path = Path(__file__).parent / "schema.sql"
     return schema_path.read_text()
 
-def fetch_subregions(api_url: str, country: str) -> List[List[str]]:
-    """Fetch sub-regions for a country that's too large"""
+def fetch_subregions(api_url: str, country: str, country_uuid: str) -> List[List[str]]:
+    """Fetch sub-regions for a country using area children query"""
     try:
         response = requests.post(
             api_url,
-            json={"query": SUBREGIONS_QUERY, "variables": {"country": country}},
+            json={"query": SUBREGIONS_QUERY, "variables": {"uuid": country_uuid}},
             headers={"Content-Type": "application/json"},
-            timeout=120
+            timeout=30
         )
 
         if response.status_code != 200:
@@ -107,21 +110,10 @@ def fetch_subregions(api_url: str, country: str) -> List[List[str]]:
             print(f"    ERROR: GraphQL errors: {data['errors']}")
             return []
 
-        # Extract unique next-level paths
-        # e.g., [["USA"], ["USA", "California"], ["USA", "California", "Yosemite"]]
-        # We want [["USA", "California"], ["USA", "Texas"], ...]
-        areas = data.get("data", {}).get("areas", [])
-        subregions = set()
-
-        for area in areas:
-            tokens = area.get("pathTokens", [])
-            # Get the next level: [country, state/province]
-            if len(tokens) >= 2:
-                subregions.add(tuple(tokens[:2]))
-
-        return [list(sr) for sr in sorted(subregions)]
+        children = data.get("data", {}).get("area", {}).get("children", [])
+        return [[country, child["areaName"]] for child in children]
     except requests.Timeout:
-        print(f"    ERROR: Subregions query timed out after 120s")
+        print(f"    ERROR: Subregions query timed out after 30s")
         return []
     except Exception as e:
         print(f"    ERROR: Unexpected error: {e}")
@@ -166,9 +158,9 @@ def fetch_region_climbs(api_url: str, tokens: List[str]) -> Tuple[Optional[List[
 
     return climbs, None
 
-def fetch_country_via_subregions(api_url: str, country: str) -> Tuple[List[Dict], int]:
+def fetch_country_via_subregions(api_url: str, country: str, country_uuid: str) -> Tuple[List[Dict], int]:
     """Fetch climbs for a country by splitting into sub-regions"""
-    subregions = fetch_subregions(api_url, country)
+    subregions = fetch_subregions(api_url, country, country_uuid)
 
     if not subregions:
         print(f"    WARNING: Could not fetch sub-regions for {country}")
@@ -197,7 +189,7 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
     """Fetch all climbs from GraphQL API by querying each country separately"""
     print(f"Fetching countries from {api_url}...")
 
-    # Get all countries
+    # Get all countries with UUIDs
     response = requests.post(
         api_url,
         json={"query": COUNTRIES_QUERY},
@@ -211,18 +203,18 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
     if "errors" in data:
         raise Exception(f"GraphQL errors: {data['errors']}")
 
-    countries = [c["areaName"] for c in data.get("data", {}).get("countries", [])]
+    countries = [(c["areaName"], c["uuid"]) for c in data.get("data", {}).get("countries", [])]
     print(f"Found {len(countries)} countries")
 
     all_climbs = []
 
-    for i, country in enumerate(countries, 1):
+    for i, (country, country_uuid) in enumerate(countries, 1):
         print(f"  [{i}/{len(countries)}] Fetching {country}...")
 
         # Known large countries - go straight to sub-regions
         if country in LARGE_COUNTRIES:
             print(f"    Large country detected, fetching sub-regions...")
-            climbs, _ = fetch_country_via_subregions(api_url, country)
+            climbs, _ = fetch_country_via_subregions(api_url, country, country_uuid)
             all_climbs.extend(climbs)
             continue
 
@@ -233,7 +225,7 @@ def fetch_all_climbs(api_url: str) -> List[Dict]:
             # Timeout - split into sub-regions
             print(f"    Country too large, fetching sub-regions...")
             print(f"    NOTE: Consider adding '{country}' to LARGE_COUNTRIES to skip this timeout")
-            climbs, _ = fetch_country_via_subregions(api_url, country)
+            climbs, _ = fetch_country_via_subregions(api_url, country, country_uuid)
             all_climbs.extend(climbs)
         elif error:
             print(f"    WARNING: Failed to fetch {country}: {error}")

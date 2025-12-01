@@ -28,6 +28,13 @@ WHERE country = 'USA' AND state_province = 'California'
 LIMIT 10;
 ```
 
+## Converting to JSON/GeoJSON
+
+```bash
+python parquet2json.py climbs.json      # JSON
+python parquet2json.py climbs.geojson   # GeoJSON (auto-detected from extension)
+```
+
 ## Data Format
 
 Each row represents one climbing route. See [schema.sql](schema.sql) for column definitions.
